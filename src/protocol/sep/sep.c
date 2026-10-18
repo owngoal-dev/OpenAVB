@@ -15,6 +15,7 @@ enum {
     SEP_TIMEOUT_RECOVERY_LIMIT = 5,
     SEP_TIMEOUT_POLL_INTERVAL_US = 100,
     SEP_FINALIZE_ROUNDS = 8,
+    SEP_READY_TIMEOUT_US = 5000000,
 };
 
 static void early_console_write(const char *message) {
@@ -29,11 +30,20 @@ static uint32_t timeout_recovery_count;
 static bool preflight_wait_complete;
 static uint8_t last_protocol_opcode;
 
-void sep_initialize(void) {
+/*
+ * Request the slot until it reads as owned, setting the enable bit at +0x10
+ * before each request as Apple's ROM does, and as the SEP ROM does on its
+ * side.
+ */
+static void sep_acquire(void) {
     uint32_t active_control = mmio_read32(SEP_MAILBOX_BASE + 0x14);
     while ((active_control & SEP_MAILBOX_OWNED) == 0) {
         /* The ownership register acknowledges writes, so an owned slot is
          * observed and preserved without issuing another ownership request. */
+        mmio_write32(
+            SEP_MAILBOX_BASE + 0x10,
+            mmio_read32(SEP_MAILBOX_BASE + 0x10) | 1
+        );
         mmio_write32(
             SEP_MAILBOX_BASE + 0x14,
             active_control | SEP_MAILBOX_OWNED
@@ -45,6 +55,29 @@ void sep_initialize(void) {
         SEP_MAILBOX_CHANNEL_MAGIC
     );
     avp_memory_barrier();
+}
+
+void sep_initialize(void) {
+    sep_acquire();
+    /*
+     * Do not send before the SEP has announced itself. After a cold start it
+     * is up long before this ROM gets here, and its first message is already
+     * waiting. After a warm reset (a guest reboot) it restarts together with
+     * this ROM and is slower: a request sent now is dropped by the mailbox,
+     * and the SEP's own setup then clears the ownership taken above, so both
+     * sides wait for each other. Wait for its message instead, taking the
+     * slot back when its restart drops it.
+     */
+    const uint64_t start = avp_time_counter();
+    const uint64_t limit = avp_time_microseconds_to_ticks(SEP_READY_TIMEOUT_US);
+    while ((mmio_read32(SEP_MAILBOX_BASE + 0x1c) & 0x00020000) != 0) {
+        if ((mmio_read32(SEP_MAILBOX_BASE + 0x14) & SEP_MAILBOX_OWNED) == 0) {
+            sep_acquire();
+        }
+        if (avp_time_has_elapsed(start, limit)) {
+            break;
+        }
+    }
 }
 
 static int32_t sep_receive(
