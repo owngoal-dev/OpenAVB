@@ -13,7 +13,6 @@ enum {
     PLATFORM_ENTROPY_OFFSET = 0x38,
     PLATFORM_BOOT_CONTEXT_OFFSET = 0x300,
     PLATFORM_VARIANT_OFFSET = 0x5c8,
-    PLATFORM_CHIP_ID_OFFSET = 0x6f0,
     /*
      * The matching vphone600 machine profile carries these values outside
      * the readable identity registers.
@@ -91,9 +90,7 @@ void platform_publish_boot_context(const AVPBootContext *context) {
 
 void platform_read_identity(AVPPlatformIdentity *identity) {
     identity->ecid = platform_ecid();
-    identity->chip_id = mmio_read32(
-        AVP_PLATFORM_BASE + PLATFORM_CHIP_ID_OFFSET
-    );
+    identity->chip_id = mmio_read32(AVP_PLATFORM_CHIP_ID);
     if (identity->chip_id == 0) {
         identity->chip_id = VPHONE600_CHIP_ID;
     }

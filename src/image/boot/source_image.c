@@ -4,6 +4,7 @@
 #include "avp/crypto/hash/corecrypto_sha512_compat.h"
 #include "avp/crypto/hash/sha256.h"
 #include "avp/platform/mmio.h"
+#include "avp/platform/platform.h"
 #include "avp/runtime/memory/runtime_memory.h"
 #include "lzfse.h"
 
@@ -332,6 +333,12 @@ static bool prepare_source_fixture(const uint8_t *image, uint32_t image_size) {
  * panics on finding it already locked -- so this runs once, here, before the
  * firmware starts.  Bit 16 of `+0x40` is the factory lock on the ROM manifest
  * and is not ours to touch; the board seeds it.
+ *
+ * Only the t8110 machine has the block.  Virtualization.framework maps nothing
+ * at `0x2_3D2E_0000` unless the guest has about 7.5 GiB of memory or more:
+ * below that the first read of `+0x84` aborts and the ROM parks in pvpanic
+ * before LLB runs, and above it the window is guest RAM.  Its iBoot boots on
+ * Apple's ROM, which publishes nothing here, so there the ROM leaves it alone.
  */
 enum {
     SOURCE_IMAGE_SIDP_BOOT = 0x23d2e0044ull,
@@ -349,6 +356,9 @@ static void source_image_publish_boot_manifest(
     AVPCCSHA512Context context;
     uint8_t digest[AVP_SHA384_DIGEST_SIZE];
 
+    if (mmio_read32(AVP_PLATFORM_CHIP_ID) == 0) {
+        return;
+    }
     if (image->encoded_manifest_bytes == 0 ||
         image->encoded_manifest_size == 0) {
         source_image_diagnostic(
