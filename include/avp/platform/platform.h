@@ -7,6 +7,11 @@
 
 enum {
     AVP_PLATFORM_BASE = 0x00400000,
+    /*
+     * Virtualization.framework leaves this register at 0 (platform.c), which
+     * is also how the ROM tells it from the t8110 machine it was written for.
+     */
+    AVP_PLATFORM_CHIP_ID = AVP_PLATFORM_BASE + 0x6f0,
     AVP_PLATFORM_VARIANT_CAPACITY = 64,
     AVP_AP_NONCE_SIZE = 32,
     AVP_SEP_NONCE_SIZE = 20,
