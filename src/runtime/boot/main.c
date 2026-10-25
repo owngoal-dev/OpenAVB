@@ -36,6 +36,7 @@ static void boot_diagnostic(const char *message) {
 __attribute__((no_stack_protector)) void firmware_main(void) {
   platform_stage(0x53524331);
   platform_progress(0, 1);
+  boot_diagnostic("OpenBootROM: [boot] runtime initialization\n");
   runtime_service_runtime_initialize();
   runtime_address_space_initialize();
   runtime_address_space_bind_page_table(runtime_mmu_page_table());
@@ -53,8 +54,10 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
   runtime_prng_platform_initialize();
   VirtualFirmwareStorage firmware_storage;
   if (!virtual_firmware_storage_initialize(&firmware_storage)) {
+    boot_diagnostic("OpenBootROM: [boot] storage initialization failed\n");
     pvpanic_trigger();
   }
+  boot_diagnostic("OpenBootROM: [boot] runtime and storage ready\n");
 
   AVPPlatformIdentity identity;
   platform_read_identity(&identity);
@@ -72,12 +75,14 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
   /* Bootstrap memory initialization has already cleared this owner window;
    * the policy reset publishes its expected flags and bounds here. */
   if (platform_boot_policy_reset(false) != 0) {
+    boot_diagnostic("OpenBootROM: [boot] policy reset failed\n");
     pvpanic_trigger();
   }
   AVPBootSourceCandidate boot_source;
   const int32_t boot_attempt =
       boot_policy.selection == AVP_BOOT_SELECTION_FORCE_DFU ? -1 : 0;
   if (!boot_source_next_candidate(&boot_context, boot_attempt, &boot_source)) {
+    boot_diagnostic("OpenBootROM: [boot] no boot source candidate\n");
     pvpanic_trigger();
   }
   pvpanic_initialize();
@@ -92,6 +97,7 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
   platform_progress(3, sep.configuration_words[0]);
 
   if (boot_source.source == AVP_BOOT_SOURCE_VIRTUAL_FIRMWARE) {
+    boot_diagnostic("OpenBootROM: [boot] loading virtual firmware\n");
     uint32_t image_size = 0;
     if (virtual_firmware_load_from_storage(&firmware_storage, &image_size)) {
       boot_diagnostic("OpenBootROM: virtual firmware loaded\n");
@@ -100,6 +106,7 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
       boot_diagnostic("OpenBootROM: virtual firmware prepared\n");
       platform_boot_policy_apply_entropy_identity_state();
       if (platform_boot_policy_publish_entropy_request() != 0) {
+        boot_diagnostic("OpenBootROM: [boot] entropy publication failed\n");
         pvpanic_trigger();
       }
       sep_finalize_bootstrap(&sep);
@@ -107,6 +114,7 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
       platform_progress(1, 0);
       platform_progress(2, 0);
       platform_progress(3, 0);
+      boot_diagnostic("OpenBootROM: [handoff] entering installed firmware\n");
       source_image_handoff(
           source_image_base(),
           source_image_size(),
@@ -118,8 +126,11 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
      * candidate iterator to DFU while preserving the live SEP session. */
     if (!boot_source_next_candidate(&boot_context, 1, &boot_source) ||
         boot_source.source != AVP_BOOT_SOURCE_DFU) {
+      boot_diagnostic("OpenBootROM: [boot] DFU fallback unavailable\n");
       pvpanic_trigger();
     }
+    boot_diagnostic(
+        "OpenBootROM: [boot] virtual firmware unavailable; falling back to DFU\n");
   }
   platform_progress(0, 0x20001);
 
@@ -136,6 +147,7 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
       source_image_validate,
       USB_MODE_DFU
   );
+  boot_diagnostic("OpenBootROM: [dfu] ready for image upload\n");
   for (;;) {
     const uint32_t event_size = simple_virtio_usb_wait_event(&usb);
     const USBEventResult result = usb_device_handle_event(
@@ -154,6 +166,7 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
       boot_diagnostic("OpenBootROM: DFU image accepted\n");
       platform_boot_policy_apply_entropy_identity_state();
       if (platform_boot_policy_publish_entropy_request() != 0) {
+        boot_diagnostic("OpenBootROM: [boot] entropy publication failed\n");
         pvpanic_trigger();
       }
       boot_diagnostic("OpenBootROM: DFU entropy published\n");
@@ -164,6 +177,7 @@ __attribute__((no_stack_protector)) void firmware_main(void) {
       boot_context_mark_remote_boot(&boot_context);
       platform_publish_boot_context(&boot_context);
       simple_virtio_usb_shutdown();
+      boot_diagnostic("OpenBootROM: [handoff] entering DFU image\n");
       source_image_handoff(
           source_image_base(),
           source_image_size(),

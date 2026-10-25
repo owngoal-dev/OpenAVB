@@ -143,10 +143,13 @@ bool source_image_measure(
 
 static bool validate_transport(const uint8_t *image, uint32_t downloaded_size) {
     if (downloaded_size < 16) {
+        source_image_diagnostic(
+            "OpenBootROM: [image] DFU download is shorter than its footer\n");
         return false;
     }
     const uint8_t *footer = image + downloaded_size - 16;
     if (!bytes_equal(footer, dfu_footer_prefix, sizeof(dfu_footer_prefix))) {
+        source_image_diagnostic("OpenBootROM: [image] DFU footer rejected\n");
         return false;
     }
     const uint32_t sent = read_u32_le(footer + sizeof(dfu_footer_prefix));
@@ -265,6 +268,8 @@ static bool prepare_real_ibss(const uint8_t *image, uint32_t image_size) {
         avp_el2_present = 0;
     }
     if (!source_image_publish_policy_metadata(&evaluated, &policy)) {
+        source_image_diagnostic(
+            "OpenBootROM: [image] iBSS policy metadata publication failed\n");
         return false;
     }
     prepared_size = told->raw_size;
@@ -300,6 +305,8 @@ static bool prepare_source_fixture(const uint8_t *image, uint32_t image_size) {
     };
     const AVPBootImagePolicy policy = {0};
     if (!source_image_publish_policy_metadata(&evaluated, &policy)) {
+        source_image_diagnostic(
+            "OpenBootROM: [image] fixture policy metadata publication failed\n");
         return false;
     }
     prepared_size = image_size;
@@ -386,6 +393,8 @@ static void source_image_publish_boot_manifest(
     }
     if ((mmio_read32(SOURCE_IMAGE_SIDP_BOOT_FLAGS) &
          SOURCE_IMAGE_SIDP_LOCKED) != 0) {
+        source_image_diagnostic(
+            "OpenBootROM: [image] boot manifest window locked; leaving unchanged\n");
         return;                         /* someone already spoke for this boot */
     }
     avp_ccsha512_init(&context, &avp_ccsha384_info);
@@ -553,8 +562,13 @@ static bool prepare_virtual_firmware_illb(
                 source_image_diagnostic(
                     "OpenBootROM: iLLB patches partly outside the image\n");
             }
+        } else {
+            source_image_diagnostic(
+                "OpenBootROM: [image] no runtime iLLB patches supplied\n");
         }
         if (!source_image_publish_policy_metadata(&evaluated, &policy)) {
+            source_image_diagnostic(
+                "OpenBootROM: [image] iLLB policy metadata publication failed\n");
             return false;
         }
         prepared_size = (uint32_t)((decoded + 63) & ~(size_t)63);
@@ -581,6 +595,8 @@ static bool prepare_virtual_firmware_illb(
         (uint32_t)evaluated.payload_size
     );
     if (!source_image_publish_policy_metadata(&evaluated, &policy)) {
+        source_image_diagnostic(
+            "OpenBootROM: [image] iLLB policy metadata publication failed\n");
         return false;
     }
     /* The payload owns this complete resident range. Cache synchronization
@@ -599,6 +615,7 @@ bool source_image_validate(uint32_t downloaded_size) {
     prepared_entry = 0;
     if (downloaded_size > SOURCE_IMAGE_CAPACITY ||
         !validate_transport(image, downloaded_size)) {
+        source_image_diagnostic("OpenBootROM: [image] DFU transport validation failed\n");
         return false;
     }
     const uint32_t image_size = downloaded_size - 16;
@@ -612,6 +629,7 @@ bool source_image_prepare_virtual_firmware(uint32_t image_size) {
     prepared_base = 0;
     prepared_entry = 0;
     if (image_size == 0 || image_size > SOURCE_IMAGE_CAPACITY) {
+        source_image_diagnostic("OpenBootROM: [image] virtual firmware size rejected\n");
         return false;
     }
     return prepare_virtual_firmware_illb(image, image_size);

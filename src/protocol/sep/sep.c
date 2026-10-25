@@ -75,6 +75,7 @@ void sep_initialize(void) {
             sep_acquire();
         }
         if (avp_time_has_elapsed(start, limit)) {
+            early_console_write("OpenBootROM: [sep] ready message wait timed out\n");
             break;
         }
     }
@@ -249,6 +250,7 @@ bool sep_execute_protocol_command(
 }
 
 SEPBootstrapResult sep_bootstrap(void) {
+    early_console_write("OpenBootROM: [sep] bootstrap begin\n");
     sep_initialize();
     SEPBootstrapResult result = {};
     const uint32_t configuration_word_count =
@@ -261,6 +263,7 @@ SEPBootstrapResult sep_bootstrap(void) {
             &result.bootstrap_payload,
             1
         ) || result.bootstrap_payload != 0xa0) {
+        early_console_write("OpenBootROM: [sep] bootstrap response rejected\n");
         pvpanic_trigger();
     }
 
@@ -272,6 +275,7 @@ SEPBootstrapResult sep_bootstrap(void) {
             result.configuration_words,
             configuration_word_count
         )) {
+        early_console_write("OpenBootROM: [sep] configuration request failed\n");
         pvpanic_trigger();
     }
     uint32_t configuration_or = 0;
@@ -279,9 +283,11 @@ SEPBootstrapResult sep_bootstrap(void) {
         configuration_or |= result.configuration_words[index];
     }
     if (configuration_or == 0) {
+        early_console_write("OpenBootROM: [sep] configuration is empty\n");
         pvpanic_trigger();
     }
 
+    early_console_write("OpenBootROM: [sep] bootstrap configuration ready\n");
     return result;
 }
 
@@ -292,11 +298,13 @@ SEPBootstrapResult sep_bootstrap_with_finalize(void) {
 }
 
 void sep_finalize_bootstrap(SEPBootstrapResult *result) {
+    early_console_write("OpenBootROM: [sep] final readiness handshakes begin\n");
     SEPCommandDescriptor finalize_descriptor;
     if (!sep_protocol_get_descriptor(
             SEP_COMMAND_FINALIZE,
             &finalize_descriptor
         )) {
+        early_console_write("OpenBootROM: [sep] finalize descriptor unavailable\n");
         pvpanic_trigger();
     }
     /* Apple's wrapper proves readiness through eight matching handshakes. */
@@ -309,9 +317,11 @@ void sep_finalize_bootstrap(SEPBootstrapResult *result) {
                 0,
                 0
             ) || last_protocol_opcode != finalize_descriptor.response) {
+            early_console_write("OpenBootROM: [sep] final readiness handshake failed\n");
             pvpanic_trigger();
         }
         result->finalize_rounds = round + 1;
     }
     result->finalize_response_opcode = last_protocol_opcode;
+    early_console_write("OpenBootROM: [sep] final readiness handshakes complete\n");
 }
