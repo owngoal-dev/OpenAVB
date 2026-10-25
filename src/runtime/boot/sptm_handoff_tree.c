@@ -1868,35 +1868,37 @@ static const char handoff_jpeg_arg[] = "jpeg0=1";
  */
 static const char handoff_nodcp_arg[] = "nodcp=1";
 /*
- * `nobaseband=1`: rename the root's `baseband` node so the tree has no
- * `/baseband` at all, rather than one whose `compatible` nobody matches.
+ * The root's `baseband` node is renamed on every boot that runs the OS from
+ * its own volume, so that tree has no `/baseband` at all, rather than one
+ * whose `compatible` nobody matches.  There is no baseband behind this
+ * board: no AppleBaseband driver ever attaches, so the installed OS sees a
+ * board without cellular.
+ *
+ * A restore keeps the node.  restored's store_baseband_migration asks
+ * BBUpdater which radio the board carries, and with no `/baseband` it fails
+ * the restore (`BBUpdaterExtremeCreateCommon(): Unable to determine radio
+ * vendor`, FAILURE:1005, 24A437 rec:job 20261021220527-52047); with the node
+ * present every build's restore passes that step.  What tells the two apart
+ * is the tree itself: iBoot names a `RAMDisk` range in /chosen/memory-map
+ * only when it boots a ramdisk.
  *
  * launchd chooses CommCenter by that path: 23A341's
  * com.apple.CommCenter.plist carries `_LimitLoadToDeviceTree = baseband`
  * and com.apple.CommCenter-noncellular.plist (same Label) carries
- * `_LimitLoadFromDeviceTree = baseband`.  With the node present and masked,
+ * `_LimitLoadFromDeviceTree = baseband`; 24A437 ships the same pair (its
+ * launchd job cache holds com.apple.CommCenter-noncellular.plist and a
+ * CommCenter job with `_LimitLoadFromDeviceTree = baseband`).  With the node present and masked,
  * the cellular CommCenter starts, waits for an AppleBaseband driver that
- * never attaches and aborts in TelephonyBasebandCreateController
- * (`__TUAssertTrigger`); launchd stops relaunching
- * it after two, and SpringBoard's main-thread
- * `getCurrentDataServiceDescriptorSync:` waits for ever.  Opt-in, because
- * 19A348 boots to Setup with the node present (its SpringBoard makes those
- * calls off the main thread), so every boot that does not ask keeps it.
+ * never attaches and aborts (23A341: `__TUAssertTrigger` in
+ * TelephonyBasebandCreateController; 24A437: `std::runtime_error: Unable to
+ * communicate with AppleBaseband driver`, 15 consecutive crashes), launchd
+ * throttles it, and SpringBoard's main thread waits for ever in a
+ * synchronous CoreTelephony call
+ * (Research/Documents/Kernel/commcenter-baseband-abort-24a437.md,
+ * rec:job 20261021211539-32603; with the node renamed,
+ * rec:job 20261021214606-38478 reaches Hello).  This replaces the opt-in
+ * `nobaseband=1`, which only 23A341's round passed.
  */
-static const char handoff_nobaseband_arg[] = "nobaseband=1";
-/*
- * `pearl-sep=1` leaves /arm-io/pearl-sep in the tree.  20A362's launchd job
- * for biometrickitd carries `_LimitLoadToDeviceTree = pearl-sep` (19A348's
- * does not), so with the node masked the job is never loaded and every
- * lookup of com.apple.pearld fails "No such process" -- BiometricKitXPCClient
- * retries for ever under a lock SpringBoard and Setup both wait on.  A boot
- * that keeps ApplePearlSEPDriver from starting some other way (20A362's
- * kernel row) asks for the node back with this; every other boot is as
- * before.  (16's 9311558b, applied by hand; 23A341's com.apple.biometrickitd.
- * pearl.plist has the same condition, and backboardd's AWPearlAttentionSampler
- * waits in -[BiometricKitXPCClient connect].)
- */
-static const char handoff_pearl_arg[] = "pearl-sep=1";
 
 static const char *const handoff_ignored[] = {
     /*
@@ -1966,35 +1968,25 @@ static const char *const handoff_ignored[] = {
     "ave",
     "ane",
     /*
-     * Face ID, whose camera the `isp` above already took away.
-     *
-     * `ApplePearlSEPDriver` matches arm-io/pearl-sep, starts, and then fails
-     * everything it tries -- there is no sensor, and the image signal
-     * processor it would talk through is ignored four entries up:
-     *
-     *     ERROR: sendMessageToCamera: AssertMacros: _camera (value = 0x0)
-     *     ERROR: stopAndPowerOffCamera: ... err == 0 (value = 0x105)
-     *     ERROR: isPearlDisabledSpecific: Savage certificate loading failed
-     *     ERROR: isPearlDisabledSpecific: Romeo Serial number check failed
-     *     ERROR: isPearlDisabledSpecific: FDR Data check failed
-     *     ERROR: isPearlDisabledSpecific: DCN Kernels loading failed
-     *
-     * It publishes a user client all the same, and the last thing in the log
-     * before the reboot that ended every 24A437 boot is userspace calling
-     * into it -- `ApplePearlUserClient::extPerform ... err 0xe00002d6`, twice,
-     * three seconds before `launchd: rebooting due to critical process
-     * crashes: SpringBoard`.  A board with no Face ID is a configuration the
-     * software knows how to be; a Face ID that answers every question with an
-     * error is not.
-     *
-     * This does **not** take `sprl` out of the xART client list -- all five of
-     * those register from the SEP side 130 ms apart, long before any AP driver
-     * could (`XARTDisableLog::register_disable`), and `sprl` is the one that
-     * never acknowledges the disable, which is what
-     * `AppleSEPManagerARM.cpp:4275` panics on.  What this removes is the
-     * reboot that asks for the xART shutdown at all.
+     * /arm-io/pearl-sep (Face ID) is not masked: d16 has Face ID, and the
+     * software reads the node, not the driver, to decide that it has.
+     * 17.0's and later launchd jobs for biometrickitd carry
+     * `_LimitLoadToDeviceTree = pearl-sep`; with the node masked the job is
+     * never loaded, every lookup of com.apple.pearld fails "No such
+     * process", and SpringBoard's main thread waits for ever in a
+     * synchronous BiometricKit call, with Setup waiting on SpringBoard
+     * (Research/Documents/Kernel/pearl-driver-on-sprl-endpoint-21a329.md,
+     * rec:job 20261021191016-84170).  What keeps the missing sensor from
+     * being asked anything is the kernel side: a build whose
+     * ApplePearlSEPDriver starts names `kernel.pearl_sep_driver_absent` in
+     * its patch table.  This replaces the old opt-in `pearl-sep=1`, which
+     * kept the node only for 20A362 and 23A341.  The mask it replaces was
+     * added for a driver that matches the node and then fails every call
+     * (`isPearlDisabledSpecific: ... failed`, and on 24A437
+     * `ApplePearlUserClient::extPerform ... err 0xe00002d6` before launchd
+     * rebooted for SpringBoard); a build that shows that again needs the
+     * kernel row, not the mask.
      */
-    "pearl-sep",
     /*
      * The graphics coprocessor, which will not be hurried:
      *
@@ -2467,6 +2459,119 @@ HANDOFF static int adt_add_prop_bytes(
 /* Defined further down; used by the stand-down report. */
 HANDOFF static void say_node_props(uint8_t *node, const char *label);
 
+/*
+ * The TZ taggers iBoot's DCP load would have locked.
+ *
+ * A t8110 DART whose PARAMS2 (+0x4) has bit 2 has a TZ tagger, and the
+ * kernel refuses one that arrives unlocked: 20A362's
+ * `t8110dart` verify (kc16 0xfffffff008497b24) wants WRITE_DISABLE|LOCK
+ * (0x18) in +0x208 and +0x200 and panics "SECURITY VIOLATION: instance %u
+ * WRITE_DISABLE enabled expected 0x18 actual 0" otherwise; 23A341's SPTM
+ * makes the same test.  iBoot sets them when it brings the DCP up and binds
+ * its TZ carve-outs (ida:ibec26 0x1fc0fa15c, flags bits 2 and 3; ida:ibec16
+ * 0x1fc0e57d4/0x1fc0e57fc).  On an installed boot that is the DCP image
+ * iBoot reads out of EAN (BuildManifest DCP IsiBootEANFirmware).  Here iBoot
+ * does not load it -- this function is reached only when the ROM has to
+ * describe the firmware itself -- so nothing locks the display DARTs, and
+ * the ROM leaves them as iBoot's DCP load would have.
+ *
+ * Which DARTs is the hardware's answer, not a list: every DART instance the
+ * tree names (`instance` entry 'TRAD') whose PARAMS2 says it has a tagger
+ * and whose words are not locked yet.  The bits are ORed in, so what iBoot
+ * did write (an APF bit 1, a lock it did set) stays.  The TZ regions are not
+ * programmed: the kernel compares them with the tree's TZT configuration,
+ * and the tree describes none for a DCP iBoot did not load.
+ */
+#define T8110_DART_PARAMS2      0x004u
+#define T8110_DART_HAS_TZT      (1u << 2)
+#define T8110_DART_TZ_LOCKED    0x18u   /* WRITE_DISABLE | LOCK */
+
+HANDOFF static uint64_t arm_io_physical(uint8_t *arm_io, uint64_t addr)
+{
+    uint8_t *ranges = adt_prop(arm_io, "ranges");
+    uint32_t size;
+
+    if (ranges == 0) {
+        return 0;
+    }
+    size = adt_prop_size(ranges);
+    for (uint32_t off = 0; off + 24u <= size; off += 24u) {
+        const uint8_t *r = ranges + ADT_PROP_HEADER + off;
+        uint64_t child = adt_rd32(r) | ((uint64_t)adt_rd32(r + 4) << 32);
+        uint64_t parent = adt_rd32(r + 8) | ((uint64_t)adt_rd32(r + 12) << 32);
+        uint64_t length = adt_rd32(r + 16) | ((uint64_t)adt_rd32(r + 20) << 32);
+
+        if (addr >= child && addr - child < length) {
+            return parent + (addr - child);
+        }
+    }
+    return 0;
+}
+
+HANDOFF static void dart_lock_taggers(uint8_t *root)
+{
+    static const char compat[] = "dart,t8110";
+    uint8_t *arm_io = adt_child(root, "arm-io");
+    uint8_t *node;
+    uint32_t children;
+
+    if (arm_io == 0) {
+        return;
+    }
+    children = adt_rd32(arm_io + 4);
+    node = adt_after_props(arm_io);
+    for (uint32_t i = 0; i < children; i++, node = adt_node_end(node)) {
+        uint8_t *c = adt_prop(node, "compatible");
+        uint8_t *reg = adt_prop(node, "reg");
+        uint8_t *inst = adt_prop(node, "instance");
+        uint32_t n;
+
+        if (c == 0 || reg == 0 || inst == 0 ||
+            adt_prop_size(c) < sizeof(compat)) {
+            continue;
+        }
+        n = 0;
+        while (n < sizeof(compat) && c[ADT_PROP_HEADER + n] == (uint8_t)compat[n]) {
+            n++;
+        }
+        if (n != sizeof(compat)) {
+            continue;
+        }
+        n = adt_prop_size(reg) / 16u;
+        if (adt_prop_size(inst) / 16u < n) {
+            n = adt_prop_size(inst) / 16u;
+        }
+        for (uint32_t k = 0; k < n; k++) {
+            const uint8_t *tag = inst + ADT_PROP_HEADER + 16u * k;
+            const uint8_t *r = reg + ADT_PROP_HEADER + 16u * k;
+            uint64_t base;
+            volatile uint32_t *dart;
+
+            if (tag[0] != 'T' || tag[1] != 'R' || tag[2] != 'A' || tag[3] != 'D') {
+                continue;
+            }
+            base = arm_io_physical(arm_io, adt_rd32(r) |
+                                   ((uint64_t)adt_rd32(r + 4) << 32));
+            if (base == 0) {
+                continue;
+            }
+            dart = (volatile uint32_t *)base;
+            if ((dart[T8110_DART_PARAMS2 / 4u] & T8110_DART_HAS_TZT) == 0) {
+                continue;
+            }
+            if ((dart[0x200u / 4u] & T8110_DART_TZ_LOCKED) == T8110_DART_TZ_LOCKED &&
+                (dart[0x208u / 4u] & T8110_DART_TZ_LOCKED) == T8110_DART_TZ_LOCKED) {
+                continue;
+            }
+            dart[0x200u / 4u] |= T8110_DART_TZ_LOCKED;
+            dart[0x208u / 4u] |= T8110_DART_TZ_LOCKED;
+            say("OpenBootROM: TZ tagger locked at ");
+            say_hex(base);
+            say("\n");
+        }
+    }
+}
+
 void sptm_handoff_dcp_firmware(uint64_t tree, uint64_t scratch);
 
 HANDOFF void sptm_handoff_dcp_firmware(uint64_t tree, uint64_t scratch)
@@ -2553,6 +2658,7 @@ HANDOFF void sptm_handoff_dcp_firmware(uint64_t tree, uint64_t scratch)
         }
         say("OpenBootROM: iop-dcp-nub carries no segment-ranges; describing"
             " the firmware here\n");
+        dart_lock_taggers(root);
     }
     /* Ignored above?  Then its compatible is gone and so is the driver. */
     if (adt_prop(adt_child(adt_child(root, "arm-io"), "dcp"), "AAPL,ignore") != 0) {
@@ -4072,77 +4178,29 @@ HANDOFF void sptm_handoff_ignore_devices(uint64_t tree, uint64_t scratch)
             say("OpenBootROM: nodcp=1, /arm-io/dcp masked\n");
         }
     }
-    /* `/baseband` renamed, only when the boot asks (handoff_nobaseband_arg). */
+    /*
+     * `/baseband` renamed on every boot that runs from its own volume (see
+     * the note above handoff_ignored); a boot iBoot handed a RAMDisk keeps it.
+     */
     {
-        static const char magic[] = "OMVBARG";
-        const volatile char *extra = (const volatile char *)BOOT_ARGS_EXTRA;
-        unsigned k;
-        unsigned found = 0;
+        uint64_t rd_at = 0;
+        uint64_t rd_len = 0;
+        uint8_t *bb = adt_child(root, "baseband");
+        uint8_t *name = bb != 0 ? adt_prop(bb, "name") : 0;
 
-        for (k = 0; k < sizeof(magic) - 1; k++) {
-            if (extra[k] != magic[k]) {
-                break;
-            }
-        }
-        if (k == sizeof(magic) - 1) {
-            const volatile char *host = extra + sizeof(magic);
-            unsigned at;
-
-            for (at = 0; host[at] != '\0' && found == 0; at++) {
-                unsigned j = 0;
-
-                while (handoff_nobaseband_arg[j] != 0
-                       && host[at + j] == handoff_nobaseband_arg[j]) {
-                    j++;
-                }
-                found = (handoff_nobaseband_arg[j] == 0);
-            }
-        }
-        if (found != 0) {
-            uint8_t *bb = adt_child(root, "baseband");
-            uint8_t *name = bb != 0 ? adt_prop(bb, "name") : 0;
-
-            if (name != 0 && adt_prop_size(name) > 0) {
-                name[ADT_PROP_HEADER] = (uint8_t)'x';   /* "xaseband" */
-                done++;
-                say("OpenBootROM: nobaseband=1, /baseband renamed\n");
-            }
+        if (map_range(root, "RAMDisk", &rd_at, &rd_len) == 0 && name != 0
+            && adt_prop_size(name) > 0) {
+            name[ADT_PROP_HEADER] = (uint8_t)'x';   /* "xaseband" */
+            done++;
+            say("OpenBootROM: /baseband renamed\n");
         }
     }
     {
-        static const char magic[] = "OMVBARG";
-        const volatile char *extra = (const volatile char *)BOOT_ARGS_EXTRA;
-        unsigned k;
-        unsigned keep_pearl = 0;
-
-        for (k = 0; k < sizeof(magic) - 1; k++) {
-            if (extra[k] != magic[k]) {
-                break;
-            }
-        }
-        if (k == sizeof(magic) - 1) {
-            const volatile char *host = extra + sizeof(magic);
-            unsigned at;
-
-            for (at = 0; host[at] != '\0' && keep_pearl == 0; at++) {
-                unsigned j = 0;
-
-                while (handoff_pearl_arg[j] != 0
-                       && host[at + j] == handoff_pearl_arg[j]) {
-                    j++;
-                }
-                keep_pearl = (handoff_pearl_arg[j] == 0);
-            }
-        }
         for (i = 0; i < sizeof(handoff_ignored) / sizeof(handoff_ignored[0]);
              i++) {
             uint8_t *node;
             const char *nm = handoff_ignored[i];
 
-            if (keep_pearl != 0 && nm[0] == 'p' && nm[1] == 'e' &&
-                nm[2] == 'a' && nm[3] == 'r' && nm[4] == 'l' && nm[5] == '-') {
-                continue;       /* pearl-sep, kept on request */
-            }
             node = adt_child(arm_io, nm);
             if (node == 0) {
                 continue;
@@ -5775,9 +5833,10 @@ HANDOFF uint32_t sptm_handoff_run(
  * `_authapfs_seal_is_broken`, and this one -- and calls this "skip rootvp
  * not-authenticated panic".  This is that patch.
  *
- * Located by encoding, so no offset: the authentication call is an
- * authenticated indirect branch with a fixed discriminator, and the three
- * words together occur once.
+ * Located by encoding, so no offset.  This shape is the authenticated
+ * indirect-call form used by 21A329.  19A348's release kernel uses a direct
+ * VNOP_IOCTL call instead; its explicit patch table uses the host's semantic
+ * kernel locator rather than adding another build-shaped ROM scan.
  *
  *     d2860f51   mov   x17, #0x307a
  *     d73f0911   blraa x8, x17

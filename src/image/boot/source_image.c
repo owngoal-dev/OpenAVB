@@ -339,6 +339,22 @@ static bool prepare_source_fixture(const uint8_t *image, uint32_t image_size) {
  * below that the first read of `+0x84` aborts and the ROM parks in pvpanic
  * before LLB runs, and above it the window is guest RAM.  Its iBoot boots on
  * Apple's ROM, which publishes nothing here, so there the ROM leaves it alone.
+ *
+ * The same digest also goes into the PMGR scratch window `0x2_3B73_0030..5C`,
+ * with bit 4 of the SoC scratch word `0x2_3B73_0000` saying it is there.  That
+ * window is the one LLB names `/boot/<96 hex>` from, and it reads it twice:
+ * its init adopts it as the boot manifest hash when bit 4 is already set
+ * (ida:ibec27 sub_1FC0BE328 0x1FC0BE3E4 -> sub_1FC08BDB0 -> sub_1FC0BE604,
+ * which copies the 48 bytes to 0x1FC2B74C8 and sets bit 26 of 0x1FC2B7368;
+ * ibec15 the same at 0x1FC0CA2E8 -> sub_1FC08CA64 -> sub_1FC0CA41C), and the
+ * mount builds the prefix from it (ida:ibec27 sub_1FC085CF8 0x1FC085DC0).  An
+ * installed 24A437 LLB builds that prefix before it has checked any Image4
+ * manifest, so without the window the prefix is empty and every /boot file
+ * fails to open
+ * (Research/Documents/iBSS/installed-llb-boot-manifest-hash-24a437.md).  The
+ * getter copies word by word into a byte buffer, so word n carries digest
+ * bytes 4n..4n+3 little-endian, the packing used for SiDP above.  Bit 4 is
+ * ORed in: the other bits are the board's straps and the stages' own flags.
  */
 enum {
     SOURCE_IMAGE_SIDP_BOOT = 0x23d2e0044ull,
@@ -347,6 +363,9 @@ enum {
     SOURCE_IMAGE_SIDP_DIGEST = 48,
     SOURCE_IMAGE_SIDP_PRESENT = 1u << 0,
     SOURCE_IMAGE_SIDP_LOCKED = 1u << 16,
+    SOURCE_IMAGE_SOC_STATE = 0x23b730000ull,
+    SOURCE_IMAGE_SOC_BOOT_MANIFEST = 0x23b730030ull,
+    SOURCE_IMAGE_SOC_BOOT_MANIFEST_PRESENT = 1u << 4,
 };
 
 static void source_image_publish_boot_manifest(
@@ -385,6 +404,20 @@ static void source_image_publish_boot_manifest(
             ((uint32_t)digest[at + 3] << 24)
         );
     }
+    for (size_t at = 0; at < SOURCE_IMAGE_SIDP_DIGEST; at += 4) {
+        mmio_write32(
+            SOURCE_IMAGE_SOC_BOOT_MANIFEST + at,
+            (uint32_t)digest[at] |
+            ((uint32_t)digest[at + 1] << 8) |
+            ((uint32_t)digest[at + 2] << 16) |
+            ((uint32_t)digest[at + 3] << 24)
+        );
+    }
+    mmio_write32(
+        SOURCE_IMAGE_SOC_STATE,
+        mmio_read32(SOURCE_IMAGE_SOC_STATE) |
+        SOURCE_IMAGE_SOC_BOOT_MANIFEST_PRESENT
+    );
     mmio_write32(SOURCE_IMAGE_SIDP_BOOT_FOURCC, next_fourcc);
     mmio_write32(
         SOURCE_IMAGE_SIDP_BOOT_FLAGS,

@@ -89,7 +89,7 @@ line iBoot built; anything else appends), then a NUL-terminated string. The
 command line holds 512 bytes including what iBoot put there; the handoff
 breadcrumb reports how many bytes were lost to truncation. The same blob
 carries opt-in tokens that change the device-tree edits: `scaler0=1`,
-`jpeg0=1`, `nodcp=1`, `nobaseband=1`, `pearl-sep=1`, `noeapfs=1`,
+`jpeg0=1`, `nodcp=1`, `noeapfs=1`,
 `clpcnoane=1` (see `src/runtime/boot/sptm_handoff_tree.c`).
 
 ## USB identity
