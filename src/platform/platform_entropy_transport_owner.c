@@ -1,5 +1,7 @@
 #include "avp/platform/platform_entropy_transport_owner.h"
 
+#include "avp/platform/platform.h"
+
 #include "avp/runtime/memory/runtime_memory.h"
 
 
@@ -11,6 +13,9 @@ enum {
     PLATFORM_ENTROPY_DESCRIPTOR_DOORBELL_ADDRESS = 0x30270000,
     PLATFORM_ENTROPY_PROGRESS_FLAG0 = 0x000a0018,
     PLATFORM_ENTROPY_PROGRESS_FLAG1 = 0x000a0016,
+    /* vma2 iBoot keeps the slot in the cfg page: status apart from the data. */
+    VMA2_ENTROPY_PRIMARY_STATUS_ADDRESS = 0x00400400,
+    VMA2_ENTROPY_PRIMARY_DATA_ADDRESS = 0x00400408,
 };
 
 const PlatformEntropyRequestRecord platform_entropy_primary_request = {
@@ -355,12 +360,33 @@ int platform_entropy_enable_request(
     return 0;
 }
 
+static void platform_entropy_materialize_vma2_handoff(
+    const void *input,
+    size_t input_size
+) {
+    platform_entropy_copy_to_volatile(
+        (volatile uint8_t *)VMA2_ENTROPY_PRIMARY_DATA_ADDRESS,
+        input,
+        input_size
+    );
+#if defined(__aarch64__)
+    __asm__ volatile("dmb sy" ::: "memory");
+#endif
+    *(volatile uint32_t *)VMA2_ENTROPY_PRIMARY_STATUS_ADDRESS |=
+        PLATFORM_ENTROPY_REQUEST_STATUS_HAS_DATA |
+        PLATFORM_ENTROPY_REQUEST_STATUS_ENABLED;
+}
+
 void platform_entropy_materialize_primary_handoff(
     const void *input,
     size_t input_size
 ) {
     if (input == 0 || input_size != PLATFORM_ENTROPY_HANDOFF_DATA_SIZE) {
         platform_entropy_transport_fatal();
+    }
+    if (!platform_has_sep()) {
+        platform_entropy_materialize_vma2_handoff(input, input_size);
+        return;
     }
     const PlatformEntropyRequestTransport transport =
         platform_entropy_transport();
