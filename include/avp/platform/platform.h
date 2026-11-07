@@ -34,6 +34,8 @@ typedef struct {
 uint64_t platform_ecid(void);
 AVPBootPolicy platform_claim_boot_policy(void);
 void platform_publish_boot_context(const AVPBootContext *context);
+/* The virtual Mac (`vma2macosap`) has no SEP, and its chip ID register is 0. */
+bool platform_has_sep(void);
 void platform_read_identity(AVPPlatformIdentity *identity);
 void platform_progress(uint32_t index, uint32_t value);
 void platform_stage(uint32_t value);

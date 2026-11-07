@@ -1,3 +1,4 @@
+#include "avp/platform/platform.h"
 #include "avp/protocol/sep/mailbox.h"
 #include "avp/platform/mmio.h"
 #include "avp/runtime/exception/pvpanic.h"
@@ -250,6 +251,16 @@ bool sep_execute_protocol_command(
 }
 
 SEPBootstrapResult sep_bootstrap(void) {
+    if (!platform_has_sep()) {
+        /* A real vma2 ticket carries `snon` as twenty 0xaa bytes. */
+        early_console_write("OpenBootROM: [sep] no SEP on this platform\n");
+        SEPBootstrapResult absent = {};
+        absent.bootstrap_payload = 0xa0;
+        for (uint32_t index = 0; index < 5; ++index) {
+            absent.configuration_words[index] = 0xaaaaaaaau;
+        }
+        return absent;
+    }
     early_console_write("OpenBootROM: [sep] bootstrap begin\n");
     sep_initialize();
     SEPBootstrapResult result = {};
@@ -298,6 +309,9 @@ SEPBootstrapResult sep_bootstrap_with_finalize(void) {
 }
 
 void sep_finalize_bootstrap(SEPBootstrapResult *result) {
+    if (!platform_has_sep()) {
+        return;
+    }
     early_console_write("OpenBootROM: [sep] final readiness handshakes begin\n");
     SEPCommandDescriptor finalize_descriptor;
     if (!sep_protocol_get_descriptor(

@@ -26,7 +26,17 @@ enum {
      * host can tell which device it is.
      */
     VPHONE600_CHIP_ID = 0xfe01,
+    VMA2_CHIP_ID = 0xfe00,
+    VMA2_BOARD_ID = 0x20,
 };
+
+static uint8_t read_board_id(void) {
+    return (uint8_t)mmio_read32(AVP_PLATFORM_BASE + PLATFORM_BOARD_ID_OFFSET);
+}
+
+bool platform_has_sep(void) {
+    return read_board_id() != VMA2_BOARD_ID;
+}
 
 static void read_variant(char output[AVP_PLATFORM_VARIANT_CAPACITY]) {
     for (uint32_t offset = 0;
@@ -92,7 +102,7 @@ void platform_read_identity(AVPPlatformIdentity *identity) {
     identity->ecid = platform_ecid();
     identity->chip_id = mmio_read32(AVP_PLATFORM_CHIP_ID);
     if (identity->chip_id == 0) {
-        identity->chip_id = VPHONE600_CHIP_ID;
+        identity->chip_id = platform_has_sep() ? VPHONE600_CHIP_ID : VMA2_CHIP_ID;
     }
     identity->security_domain = (uint8_t)mmio_read32(
         AVP_PLATFORM_BASE + PLATFORM_SECURITY_DOMAIN_OFFSET
@@ -102,9 +112,7 @@ void platform_read_identity(AVPPlatformIdentity *identity) {
     );
     identity->chip_fuse_mode = VPHONE600_CHIP_FUSE_MODE;
     identity->security_epoch = VPHONE600_SECURITY_EPOCH;
-    identity->board_id = (uint8_t)mmio_read32(
-        AVP_PLATFORM_BASE + PLATFORM_BOARD_ID_OFFSET
-    );
+    identity->board_id = read_board_id();
     identity->boot_flags = VPHONE600_BOOT_FLAGS;
     read_variant(identity->variant);
     for (uint32_t index = 0; index < sizeof(identity->ap_nonce); ++index) {

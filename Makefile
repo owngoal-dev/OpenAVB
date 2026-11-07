@@ -22,7 +22,7 @@ CFLAGS := --target=aarch64-none-elf -std=c17 -O2 -g \
 	-mno-outline-atomics -mstrict-align -mbranch-protection=none -fno-pic \
 	-fno-pie -fno-common -fno-vectorize -fno-slp-vectorize \
 	-DNDEBUG -Wall -Wextra -Werror -Wno-sign-compare \
-	-Wno-unused-but-set-global -MMD -MP $(INCLUDES)
+	-Wno-unused-but-set-global -Wno-unknown-warning-option -MMD -MP $(INCLUDES)
 ROM_CFLAGS := $(CFLAGS) -fstack-protector-strong \
 	-mstack-protector-guard=global -moutline
 PAYLOAD_CFLAGS := $(CFLAGS) -fno-stack-protector
