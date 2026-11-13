@@ -319,6 +319,12 @@ int platform_entropy_write_request(
             (void *)input,
             input_size
         );
+        /* The descriptor twin of the MMIO path's HAS_DATA bit below. A
+         * written request reads back as holding nothing until this is
+         * sent: AVPBooter sends it with every non-empty write, and the
+         * iOS 27 LLB asks for it (HAS_DATA) before reading the request. */
+        platform_entropy_submit_command_descriptor(
+            request, PLATFORM_ENTROPY_DESCRIPTOR_SET_HAS_DATA, 0, 0);
         return 0;
     }
     const PlatformEntropyRequestTransport transport =
