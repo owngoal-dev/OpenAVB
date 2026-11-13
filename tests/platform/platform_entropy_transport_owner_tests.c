@@ -84,9 +84,6 @@ static void descriptor_submit(
         break;
     case PLATFORM_ENTROPY_DESCRIPTOR_WRITE:
         memcpy(stored, data, descriptor->data_size);
-        if (has_data != 0) {
-            *has_data = true;
-        }
         break;
     case PLATFORM_ENTROPY_DESCRIPTOR_IS_ENABLED:
         assert(enabled != 0 && descriptor->data_size == 1);
@@ -99,6 +96,14 @@ static void descriptor_submit(
     case PLATFORM_ENTROPY_DESCRIPTOR_ENABLE:
         assert(enabled != 0);
         *enabled = true;
+        break;
+    case PLATFORM_ENTROPY_DESCRIPTOR_SET_HAS_DATA:
+        /* Like the host: a written request holds nothing until this. */
+        assert(descriptor->data_physical_address == 0 &&
+            descriptor->data_size == 0);
+        if (has_data != 0) {
+            *has_data = true;
+        }
         break;
     }
 }
@@ -281,11 +286,15 @@ static void test_descriptor_transport(void) {
     assert(memcmp(data, model.primary, sizeof(data)) == 0);
 
     memset(data, 0x19, sizeof(data));
+    assert(!model.secondary_has_data);
     assert(platform_entropy_write_request(
         &platform_entropy_secondary_request, data, sizeof(data)) == 0);
     assert(memcmp(data, model.secondary, sizeof(data)) == 0);
     assert(model.last_descriptor.operation ==
-        PLATFORM_ENTROPY_DESCRIPTOR_WRITE);
+        PLATFORM_ENTROPY_DESCRIPTOR_SET_HAS_DATA);
+    assert(model.secondary_has_data);
+    assert(platform_entropy_request_has_data(
+        &platform_entropy_secondary_request));
     assert(platform_entropy_enable_request(
         &platform_entropy_secondary_request) == 0);
     assert(model.secondary_enabled);
@@ -297,7 +306,7 @@ static void test_descriptor_transport(void) {
     platform_entropy_set_control_flag_bit1();
     assert(model.control == 0x83);
     assert(model.progress == 0x000a0016);
-    assert(model.submissions == 10);
+    assert(model.submissions == 14);
 
     uint8_t handoff[PLATFORM_ENTROPY_HANDOFF_DATA_SIZE];
     for (size_t index = 0; index < sizeof(handoff); ++index) {
